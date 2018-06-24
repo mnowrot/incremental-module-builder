@@ -69,11 +69,14 @@ public class ModuleCalculator
             {
                 MavenProject project = null;
                 int longestRelativePathLength = -1;
+                MavenProject rootProject = null;
                 for ( MavenProject currProject : projectList )
                 {
                     Path relativize = projectRootpath.relativize( currProject.getBasedir().toPath() );
-                    boolean startsWith = "".equals(relativize.toString()) || ".".equals(relativize.toString())
-                                         || new File(fileItem.getPath()).toPath().startsWith(relativize);
+                    if (isRootProject(relativize)) {
+                        rootProject = currProject;
+                    }
+                    boolean startsWith = new File(fileItem.getPath()).toPath().startsWith(relativize);
                     logger.debug("startswith: " + startsWith + " " + fileItem.getPath() + " " + relativize);
                     int currRelativePathLength = relativize.toString().length();
                     if (startsWith && longestRelativePathLength < currRelativePathLength)
@@ -85,10 +88,18 @@ public class ModuleCalculator
                 if (project != null && !result.contains(project)) {
                     result.add(project);
                 }
+                // should we add root project
+                if (!fileItem.getPath().contains("/") && !fileItem.getPath().contains("\\")) {
+                    result.add(rootProject);
+                }
             }
         }
 
         return result;
+    }
+
+    private boolean isRootProject(Path relativePath) {
+        return "".equals(relativePath.toString()) || ".".equals(relativePath.toString());
     }
 
 }

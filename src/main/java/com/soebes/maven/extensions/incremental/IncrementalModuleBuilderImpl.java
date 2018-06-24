@@ -75,17 +75,28 @@ class IncrementalModuleBuilderImpl
             // true));
         }
 
-        List<MavenProject> result = new LinkedList<>();
+        List<MavenProject> resultDeduplicated = new LinkedList<>();
 
         for ( MavenProject project : intermediateResult )
         {
-            if ( !result.contains( project ) )
+            if ( !resultDeduplicated.contains( project ) )
             {
-                result.add( project );
+                resultDeduplicated.add( project );
             }
         }
 
-        this.projects = result;
+        // sort so the modules to be actually built have the same order as in the original build plan
+        List<MavenProject> resultSorted = new LinkedList<>();
+
+        List<MavenProject> originalBuildOrder = session.getProjectDependencyGraph().getSortedProjects();
+
+        for (MavenProject originalProject : originalBuildOrder) {
+            if (resultDeduplicated.contains(originalProject)) {
+                resultSorted.add(originalProject);
+            }
+        }
+
+        this.projects = resultSorted;
 
     }
 

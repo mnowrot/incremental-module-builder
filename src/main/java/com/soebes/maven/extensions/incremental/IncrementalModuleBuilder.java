@@ -19,13 +19,21 @@ package com.soebes.maven.extensions.incremental;
  * under the License.
  */
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.inject.Singleton;
+
+import com.google.common.io.Files;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.maven.execution.MavenSession;
@@ -36,10 +44,14 @@ import org.apache.maven.lifecycle.internal.ReactorContext;
 import org.apache.maven.lifecycle.internal.TaskSegment;
 import org.apache.maven.lifecycle.internal.builder.Builder;
 import org.apache.maven.project.MavenProject;
+import org.apache.maven.scm.ChangeFile;
+import org.apache.maven.scm.ChangeSet;
 import org.apache.maven.scm.ScmException;
 import org.apache.maven.scm.ScmFile;
 import org.apache.maven.scm.ScmFileSet;
-import org.apache.maven.scm.command.status.StatusScmResult;
+import org.apache.maven.scm.ScmRevision;
+import org.apache.maven.scm.command.changelog.ChangeLogScmRequest;
+import org.apache.maven.scm.command.changelog.ChangeLogSet;
 import org.apache.maven.scm.manager.NoSuchScmProviderException;
 import org.apache.maven.scm.manager.ScmManager;
 import org.apache.maven.scm.repository.ScmRepository;
@@ -49,15 +61,15 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Incremental Module Builder behaviour.
- * 
+ *
  * @author Karl Heinz Marbaise <khmarbaise@apache.org>
  */
 @Singleton
-@Named( "incremental" )
+@Named("incremental")
 public class IncrementalModuleBuilder
-    implements Builder
-{
-    private final Logger LOGGER = LoggerFactory.getLogger( getClass() );
+    implements Builder {
+
+    private final Logger LOGGER = LoggerFactory.getLogger(getClass());
 
     private final LifecycleModuleBuilder lifecycleModuleBuilder;
 
@@ -65,27 +77,23 @@ public class IncrementalModuleBuilder
     private ScmManager scmManager;
 
     @Inject
-    public IncrementalModuleBuilder( LifecycleModuleBuilder lifecycleModuleBuilder )
-    {
-        LOGGER.info( " ------------------------------------" );
-        LOGGER.info( " Maven Incremental Module Builder" );
-        LOGGER.info( " Version: {}", IncrementalModuleBuilderVersion.getVersion() );
-        LOGGER.debug( "     SHA: {}", IncrementalModuleBuilderVersion.getRevision() );
-        LOGGER.info( " ------------------------------------" );
+    public IncrementalModuleBuilder(LifecycleModuleBuilder lifecycleModuleBuilder) {
+        LOGGER.info(" ------------------------------------");
+        LOGGER.info(" Maven Incremental Module Builder");
+        LOGGER.info(" Version: {}", IncrementalModuleBuilderVersion.getVersion());
+        LOGGER.debug("     SHA: {}", IncrementalModuleBuilderVersion.getRevision());
+        LOGGER.info(" ------------------------------------");
         this.lifecycleModuleBuilder = lifecycleModuleBuilder;
     }
 
-    private boolean havingScmDeveloperConnection( MavenSession session )
-    {
-        if ( session.getTopLevelProject().getScm() == null )
-        {
-            LOGGER.error( "The incremental module builder needs a correct scm configuration." );
+    private boolean havingScmDeveloperConnection(MavenSession session) {
+        if (session.getTopLevelProject().getScm() == null) {
+            LOGGER.error("The incremental module builder needs a correct scm configuration.");
             return false;
         }
 
-        if ( StringUtils.isEmpty( session.getTopLevelProject().getScm().getDeveloperConnection() ) )
-        {
-            LOGGER.error( "The incremental module builder needs the scm developerConnection to work properly." );
+        if (StringUtils.isEmpty(session.getTopLevelProject().getScm().getDeveloperConnection())) {
+            LOGGER.error("The incremental module builder needs the scm developerConnection to work properly.");
             return false;
         }
 
@@ -93,80 +101,130 @@ public class IncrementalModuleBuilder
     }
 
     @Override
-    public void build( final MavenSession session, final ReactorContext reactorContext, ProjectBuildList projectBuilds,
-                       final List<TaskSegment> taskSegments, ReactorBuildStatus reactorBuildStatus )
-        throws ExecutionException, InterruptedException
-    {
+    public void build(final MavenSession session, final ReactorContext reactorContext, ProjectBuildList projectBuilds,
+                      final List<TaskSegment> taskSegments, ReactorBuildStatus reactorBuildStatus)
+        throws ExecutionException, InterruptedException {
 
         // Think about this?
-        if ( !session.getCurrentProject().isExecutionRoot() )
-        {
-            LOGGER.info( "Not executing in root." );
+        if (!session.getCurrentProject().isExecutionRoot()) {
+            LOGGER.info("Not executing in root.");
         }
 
         Path projectRootpath = session.getTopLevelProject().getBasedir().toPath();
 
-        if ( !havingScmDeveloperConnection( session ) )
-        {
-            LOGGER.warn( "There is no scm developer connection configured." );
-            LOGGER.warn( "So we can't estimate which modules have changed." );
+        if (!havingScmDeveloperConnection(session)) {
+            LOGGER.warn("There is no scm developer connection configured.");
+            LOGGER.warn("So we can't estimate which modules have changed.");
             return;
         }
 
         // TODO: Make more separation of concerns..(Extract the SCM Code from
         // here?
         ScmRepository repository = null;
-        try
-        {
+        try {
             // Assumption: top level project contains the SCM entry.
-            repository = scmManager.makeScmRepository( session.getTopLevelProject().getScm().getDeveloperConnection() );
-        }
-        catch ( ScmRepositoryException | NoSuchScmProviderException e )
-        {
-            LOGGER.error( "Failure during makeScmRepository", e );
+            repository = scmManager.makeScmRepository(session.getTopLevelProject().getScm().getDeveloperConnection());
+        } catch (ScmRepositoryException | NoSuchScmProviderException e) {
+            LOGGER.error("Failure during makeScmRepository", e);
             return;
         }
 
-        StatusScmResult result = null;
-        try
-        {
-            result = scmManager.status( repository, new ScmFileSet( session.getTopLevelProject().getBasedir() ) );
-        }
-        catch ( ScmException e )
-        {
-            LOGGER.error( "Failure during status", e );
-            return;
-        }
+        List<ScmFile> changedFiles = getChangedFiles(repository, session);
+        if (changedFiles.isEmpty()) {
+            LOGGER.info(" Nothing has been changed.");
+        } else {
 
-        List<ScmFile> changedFiles = result.getChangedFiles();
-        if ( changedFiles.isEmpty() )
-        {
-            LOGGER.info( " Nothing has been changed." );
-        }
-        else
-        {
-
-            for ( ScmFile scmFile : changedFiles )
-            {
-                LOGGER.info( " Changed file: " + scmFile.getPath() + " " + scmFile.getStatus() );
+            for (ScmFile scmFile : changedFiles) {
+                LOGGER.info(" Changed file: " + scmFile.getPath() + " " + scmFile.getStatus());
             }
 
             ModuleCalculator mc =
-                new ModuleCalculator( session.getProjectDependencyGraph().getSortedProjects(), changedFiles );
-            List<MavenProject> calculateChangedModules = mc.calculateChangedModules( projectRootpath );
+                new ModuleCalculator(session.getProjectDependencyGraph().getSortedProjects(), changedFiles);
+            List<MavenProject> calculateChangedModules = mc.calculateChangedModules(projectRootpath);
 
-            for ( MavenProject mavenProject : calculateChangedModules )
-            {
-                LOGGER.info( "Changed Project: " + mavenProject.getId() );
+            for (MavenProject mavenProject : calculateChangedModules) {
+                LOGGER.info("Changed Project: " + mavenProject.getId());
             }
 
             IncrementalModuleBuilderImpl incrementalModuleBuilderImpl =
-                new IncrementalModuleBuilderImpl( calculateChangedModules, lifecycleModuleBuilder, session,
-                                                  reactorContext, taskSegments );
+                new IncrementalModuleBuilderImpl(calculateChangedModules, lifecycleModuleBuilder, session,
+                                                 reactorContext, taskSegments);
 
             // Really build only changed modules.
             incrementalModuleBuilderImpl.build();
         }
+    }
+
+    private List<ScmFile> getChangedFiles(ScmRepository repository, MavenSession session) {
+        Set<ScmFile> changedFiles = new HashSet<>();
+        File basedir = session.getTopLevelProject().getBasedir();
+        ScmFileSet scmFileSet = new ScmFileSet(basedir);
+
+        // Add from status
+//        try {
+//            StatusScmResult statusResult = scmManager.status(repository, scmFileSet);
+//            changedFiles.addAll(statusResult.getChangedFiles());
+//        } catch (ScmException e) {
+//            LOGGER.error("Failure during status", e);
+//        }
+
+        // Find the SCM path for the Basedir
+        String repositoryUri = repository.getProviderRepository().toString();
+
+        // Add from changeLog (if file with starting revision found)
+        String startRev = null;
+        try {
+            startRev =
+                Files.readFirstLine(basedir.toPath().resolve("revision.txt").toFile(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            LOGGER.error("Failure during revision retrieval", e);
+        }
+        if (startRev != null && !startRev.isEmpty()) {
+            ChangeLogScmRequest changeLogScmRequest = new ChangeLogScmRequest(repository, scmFileSet);
+            try {
+                // as the log search is left-side inclusive, bump the revision number
+                changeLogScmRequest.setStartRevision(new ScmRevision(Integer.toString(Integer.parseInt(startRev) + 1)));
+
+                ChangeLogSet changeLogSet = scmManager.changeLog(changeLogScmRequest).getChangeLog();
+                if (changeLogSet != null) {
+                    for (ChangeSet changeSet : changeLogSet.getChangeSets()) {
+                        addChangeFiles(repositoryUri, changeSet.getFiles(), changedFiles);
+                    }
+                }
+            } catch (ScmException e) {
+                LOGGER.error("Failure during status", e);
+            }
+        }
+
+        // TODO: Change to Set everywhere?
+        return new ArrayList<>(changedFiles);
+    }
+
+    private void addChangeFiles(String repositoryUri, List<ChangeFile> changeFiles, Set<ScmFile> scmFiles) {
+        for (ChangeFile changeFile : changeFiles) {
+            scmFiles.add(new ScmFile(relativizeRepositoryPathToBuildRoot(repositoryUri, changeFile.getName()),
+                    changeFile.getAction()));
+            String originalName = changeFile.getOriginalName();
+            if (originalName != null) {
+                scmFiles.add(new ScmFile(relativizeRepositoryPathToBuildRoot(repositoryUri, originalName),
+                        changeFile.getAction()));
+            }
+        }
+    }
+
+    private String relativizeRepositoryPathToBuildRoot(String repositoryUri, String toRelativize) {
+        for (int i = 0; i < repositoryUri.length(); i++) {
+            String repositoryUriEnding = repositoryUri.substring(i);
+            if (toRelativize.startsWith(repositoryUriEnding)) {
+                String nameRelativized = toRelativize.substring(repositoryUriEnding.length());
+                if (nameRelativized.startsWith("/") || nameRelativized.startsWith("\\")) {
+                    return nameRelativized.substring(1);
+                } else {
+                    return nameRelativized;
+                }
+            }
+        }
+        return toRelativize;
     }
 
 }
