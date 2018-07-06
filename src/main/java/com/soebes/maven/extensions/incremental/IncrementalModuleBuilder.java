@@ -46,6 +46,7 @@ import org.apache.maven.scm.ScmFileSet;
 import org.apache.maven.scm.ScmRevision;
 import org.apache.maven.scm.command.changelog.ChangeLogScmRequest;
 import org.apache.maven.scm.command.changelog.ChangeLogSet;
+import org.apache.maven.scm.command.status.StatusScmResult;
 import org.apache.maven.scm.manager.NoSuchScmProviderException;
 import org.apache.maven.scm.manager.ScmManager;
 import org.apache.maven.scm.repository.ScmRepository;
@@ -68,6 +69,10 @@ public class IncrementalModuleBuilder implements Builder {
 
     @Inject
     private ScmManager scmManager;
+
+    private boolean includeChangesLocal = true;
+
+    private boolean includeChangesVcs = false;
 
     @Inject
     public IncrementalModuleBuilder(LifecycleModuleBuilder lifecycleModuleBuilder) {
@@ -167,31 +172,36 @@ public class IncrementalModuleBuilder implements Builder {
         File basedir = session.getTopLevelProject().getBasedir();
         ScmFileSet scmFileSet = new ScmFileSet(basedir);
 
-        // Add from status
-// try {
-// StatusScmResult statusResult = scmManager.status(repository, scmFileSet);
-// changedFiles.addAll(statusResult.getChangedFiles());
-// } catch (ScmException e) {
-// LOGGER.error("Failure during status", e);
-// }
-
-        // Find the SCM path for the Basedir
-        String repositoryUri = repository.getProviderRepository().toString();
-
-        if (startRev != null && !startRev.isEmpty()) {
-            ChangeLogScmRequest changeLogScmRequest = new ChangeLogScmRequest(repository, scmFileSet);
+        if (includeChangesLocal) {
+            // Add from status
             try {
-                // as the log search is left-side inclusive, bump the revision number
-                changeLogScmRequest.setStartRevision(new ScmRevision(Integer.toString(Integer.parseInt(startRev) + 1)));
-
-                ChangeLogSet changeLogSet = scmManager.changeLog(changeLogScmRequest).getChangeLog();
-                if (changeLogSet != null) {
-                    for (ChangeSet changeSet : changeLogSet.getChangeSets()) {
-                        addChangeFiles(repositoryUri, changeSet.getFiles(), changedFiles);
-                    }
-                }
+                StatusScmResult statusResult = scmManager.status(repository, scmFileSet);
+                changedFiles.addAll(statusResult.getChangedFiles());
             } catch (ScmException e) {
                 LOGGER.error("Failure during status", e);
+            }
+        }
+
+        if (includeChangesVcs) {
+            // Find the SCM path for the Basedir
+            String repositoryUri = repository.getProviderRepository().toString();
+
+            if (startRev != null && !startRev.isEmpty()) {
+                ChangeLogScmRequest changeLogScmRequest = new ChangeLogScmRequest(repository, scmFileSet);
+                try {
+                    // as the log search is left-side inclusive, bump the revision number
+                    changeLogScmRequest
+                        .setStartRevision(new ScmRevision(Integer.toString(Integer.parseInt(startRev) + 1)));
+
+                    ChangeLogSet changeLogSet = scmManager.changeLog(changeLogScmRequest).getChangeLog();
+                    if (changeLogSet != null) {
+                        for (ChangeSet changeSet : changeLogSet.getChangeSets()) {
+                            addChangeFiles(repositoryUri, changeSet.getFiles(), changedFiles);
+                        }
+                    }
+                } catch (ScmException e) {
+                    LOGGER.error("Failure during status", e);
+                }
             }
         }
 
