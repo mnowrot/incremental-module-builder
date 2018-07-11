@@ -193,10 +193,6 @@
     </dependency>
   </dependencies>
   <distributionManagement>
-    <site>
-      <id>github</id>
-      <url>scm:git:git@github.com:mnowrot/incremental-module-builder.git</url>
-    </site>
     <snapshotRepository>
       <id>plugins-snapshots</id>
       <url>http://192.168.10.100/nexus/content/repositories/plugins-snapshots</url>
