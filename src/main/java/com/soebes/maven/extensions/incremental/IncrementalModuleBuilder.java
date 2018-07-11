@@ -57,7 +57,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Incremental Module Builder behaviour.
  *
- * @author Karl Heinz Marbaise <khmarbaise@apache.org>
+ * @author Karl Heinz Marbaise
  */
 @Singleton
 @Named("incremental")
