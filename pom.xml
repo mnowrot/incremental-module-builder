@@ -201,6 +201,10 @@
       <id>plugins-snapshots</id>
       <url>http://192.168.10.100/nexus/content/repositories/plugins-snapshots</url>
     </snapshotRepository>
+    <repository>
+      <id>plugins</id>
+      <url>http://192.168.10.100/nexus/content/repositories/plugins</url>
+    </repository>
   </distributionManagement>
 
   <build>
